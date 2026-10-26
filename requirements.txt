@@ -1,0 +1,6 @@
+PyQt6>=6.4
+matplotlib>=3.5
+numpy
+yfinance
+# Windows has no system time-zone database; zoneinfo needs this for America/New_York.
+tzdata

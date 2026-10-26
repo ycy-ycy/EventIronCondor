@@ -1,0 +1,10 @@
+# Local Python environment created by run.ps1
+.venv/
+__pycache__/
+*.pyc
+
+# Personal trades and the auto-restore cache
+data/
+
+# Data-source choices; may hold API keys in provider_options
+settings.json
