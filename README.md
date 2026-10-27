@@ -85,6 +85,10 @@ reinstall when `requirements.txt` changes.
 
 Without the script: `pip install -r requirements.txt`, then `python main.py`.
 
+**Tests** run offline in a few seconds and never touch your data or settings:
+`.venv\python.exe -m unittest` from the repo root (or `.venv\Scripts\python.exe` for a
+venv-built `.venv`).
+
 ## How it works
 
 **Pricing.**
@@ -202,6 +206,8 @@ main.py                   entry point
 run.ps1                   environment setup + launcher
 requirements.txt
 docs/                     README screenshots
+tests/                    offline unittest suite (golden values from real trades, IV method,
+                          session timing, save-file migration, data-source parsing, GUI)
 tools/
   render_screenshots.py   re-renders docs/*.png from the CRWV example trade
                           (offscreen; leaves your cache and settings alone)
