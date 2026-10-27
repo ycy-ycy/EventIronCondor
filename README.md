@@ -1,10 +1,13 @@
 # Earnings Option Spread Calculator
 
+### Model your P&L before you trade.
+
+See the earnings move the options imply, your breakevens, and what the position is worth
+at every stock price and every minute of the close day, before you open it.
+
 A Windows desktop calculator (PyQt6) for trading a **long iron condor around an earnings
 report**. Before the report you buy a put spread below the price and a call spread above
-it. You sell both after the stock has moved, usually the next morning. The app prices both
-sides, estimates the earnings move the options imply, and shows what the position is worth
-for any stock price and time on the close day.
+it, then sell both after the stock has moved, usually the next morning.
 
 ![Main window: open side on the left, close side on the right](docs/main-window.png)
 
