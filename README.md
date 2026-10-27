@@ -87,7 +87,8 @@ Without the script: `pip install -r requirements.txt`, then `python main.py`.
 
 **Tests** run offline in a few seconds and never touch your data or settings:
 `.venv\python.exe -m unittest` from the repo root (or `.venv\Scripts\python.exe` for a
-venv-built `.venv`).
+venv-built `.venv`). GitHub Actions runs them on Windows with Python 3.12 on every push
+and pull request (`.github/workflows/tests.yml`).
 
 ## How it works
 
@@ -202,6 +203,7 @@ to get the after-close time pinning.
 ## Layout
 
 ```
+.github/workflows/        CI: runs the tests on every push and pull request
 main.py                   entry point
 run.ps1                   environment setup + launcher
 requirements.txt
