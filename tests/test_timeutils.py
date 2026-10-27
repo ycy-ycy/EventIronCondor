@@ -7,8 +7,10 @@ from ironcondor.core.timeutils import (
     get_this_friday,
     get_weekday_name,
     next_weekday,
+    format_expiry_text,
     parse_date_text,
-    time_to_friday_4pm_years,
+    parse_expiry_text,
+    time_to_expiry_4pm_years,
 )
 
 
@@ -18,16 +20,27 @@ def et(text):
 
 class TimeToExpiryTest(unittest.TestCase):
     def test_monday_close_to_friday_close_is_four_days(self):
-        self.assertAlmostEqual(time_to_friday_4pm_years("MON", "16", "00") * 365, 4.0, places=12)
+        self.assertAlmostEqual(time_to_expiry_4pm_years("MON", "16", "00") * 365, 4.0, places=12)
+
+    def test_thursday_expiry_before_a_holiday_friday(self):
+        self.assertAlmostEqual(time_to_expiry_4pm_years("MON", "16", "00", "THU") * 365, 3.0, places=12)
+        with self.assertRaisesRegex(ValueError, "after the THU 4 PM expiry"):
+            time_to_expiry_4pm_years("FRI", "09", "30", "THU")
 
     def test_after_friday_close_raises(self):
         with self.assertRaises(ValueError):
-            time_to_friday_4pm_years("FRI", "16", "01")
+            time_to_expiry_4pm_years("FRI", "16", "01")
 
     def test_bad_time_raises(self):
         for hour, minute in (("24", "00"), ("9", "60"), ("", "30")):
             with self.assertRaises(ValueError):
-                time_to_friday_4pm_years("TUE", hour, minute)
+                time_to_expiry_4pm_years("TUE", hour, minute)
+
+    def test_expiry_text_shows_the_weekday(self):
+        self.assertEqual(format_expiry_text(date(2027, 3, 25)), "THU 2027-03-25")
+        self.assertEqual(parse_expiry_text("THU 2027-03-25"), date(2027, 3, 25))
+        self.assertEqual(parse_expiry_text("2027-03-25"), date(2027, 3, 25))
+        self.assertIsNone(parse_expiry_text(""))
 
 
 class DateHelpersTest(unittest.TestCase):

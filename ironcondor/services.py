@@ -1,19 +1,14 @@
 """Market-data facade: routes each request to the data source chosen for it."""
 
-from datetime import timedelta
-
 from .core.atm_iv import (
     atm_forward_ivs,
-    choose_expiry_on_or_after,
-    choose_quarterly_expiry_9_to_12_months,
+    choose_monthly_expiry_21_to_56_days,
+    choose_weekly_expiry,
 )
 from .core.numbers import finite_positive
 from .core.timeutils import (
     format_date_text,
     get_now,
-    get_open_day_for_date,
-    get_this_friday,
-    time_to_friday_4pm_years,
     years_from_now_to_expiry_4pm,
 )
 from .providers import (
@@ -70,24 +65,19 @@ class MarketData:
             raise DataSourceError(f"No option expirations were returned by {option_source.label}")
         return expiries
 
-    def front_week_atm_iv(self, ticker: str, t_years=None, r=0.0) -> dict:
-        """ATM IV of the first expiry on/after this Friday, from the option quotes alone."""
+    def front_week_atm_iv(self, ticker: str, t_years=None, r=0.0, expiry=None) -> dict:
+        """ATM IV of the weekly, from the option quotes alone.
+
+        expiry: the position's weekly; None for this week's (see choose_weekly_expiry).
+        t_years: from the time boxes to it; None for from now.
+        """
         symbol = normalize_ticker(ticker)
         options = self.source("option")
 
-        if t_years is None or t_years <= 0:
-            now = get_now()
-            t_years = time_to_friday_4pm_years(
-                get_open_day_for_date(now.date()),
-                str(now.hour),
-                f"{now.minute:02d}",
-            )
-
-        target_expiry = get_this_friday()
-        actual_expiry = choose_expiry_on_or_after(self._expirations(options, symbol), target_expiry)
+        actual_expiry = expiry or choose_weekly_expiry(self._expirations(options, symbol), get_now().date())
         option_chain = options.get_option_chain(symbol, actual_expiry)
-        if option_chain.quote_time is not None:
-            # Closing snapshot: the quotes are the 16:00 ones, so time runs from 16:00.
+        if option_chain.quote_time is not None or t_years is None or t_years <= 0:
+            # From now, or from the 16:00 close when the quotes are a closing snapshot.
             t_years = years_from_now_to_expiry_4pm(format_date_text(actual_expiry), reference_dt=option_chain.quote_time)
 
         atm = atm_forward_ivs(option_chain, t_years, r)
@@ -97,44 +87,45 @@ class MarketData:
             "source": options.label,
             "quote_time": option_chain.quote_time,
             "t_years": t_years,
-            "target_expiry": format_date_text(target_expiry),
             "actual_expiry": format_date_text(actual_expiry),
             **atm,
         }
 
-    def quarterly_atm_iv(self, ticker: str, stock_price=None, r=0.0) -> dict:
-        """Strict 9~12M quarterly ATM IV (LT IV). stock_price only feeds the implied-price check."""
+    def event_atm_ivs(self, ticker: str, stock_price=None, r=0.0) -> dict:
+        """The weekly's and the 21~56-day monthly's ATM IV, both with T from one quote time.
+
+        The quote time is the closing snapshot's once the session is over, else now; to the
+        minute, as its box shows it. The monthly is read strictly; stock_price only feeds its
+        implied-price check.
+        """
         symbol = normalize_ticker(ticker)
         options = self.source("option")
 
         if stock_price is None or not finite_positive(stock_price):
             stock_price = self.latest_price(symbol)
 
+        expiries = self._expirations(options, symbol)
         reference_date = get_now().date()
-        actual_expiry = choose_quarterly_expiry_9_to_12_months(
-            self._expirations(options, symbol),
-            reference_date=reference_date,
-        )
-        actual_expiry_text = format_date_text(actual_expiry)
-        target_expiry = (
-            f"{format_date_text(reference_date + timedelta(days=270))}.."
-            f"{format_date_text(reference_date + timedelta(days=390))}"
-        )
+        weekly_expiry = choose_weekly_expiry(expiries, reference_date)
+        monthly_expiry = choose_monthly_expiry_21_to_56_days(expiries, reference_date=reference_date)
+        weekly_chain = options.get_option_chain(symbol, weekly_expiry)
+        monthly_chain = options.get_option_chain(symbol, monthly_expiry)
+        quote_time = (weekly_chain.quote_time or get_now()).replace(second=0, microsecond=0)
 
-        option_chain = options.get_option_chain(symbol, actual_expiry)
-        # From now, or from the 16:00 close when the quotes are a closing snapshot.
-        t_years = years_from_now_to_expiry_4pm(actual_expiry_text, reference_dt=option_chain.quote_time)
-
-        atm = atm_forward_ivs(option_chain, t_years, r, strict=True, stock_price=stock_price)
+        def read(option_chain, expiry, **checks):
+            t_years = years_from_now_to_expiry_4pm(format_date_text(expiry), reference_dt=quote_time)
+            return {"actual_expiry": format_date_text(expiry), "t_years": t_years,
+                    **atm_forward_ivs(option_chain, t_years, r, **checks)}
 
         return {
             "symbol": symbol,
             "source": options.label,
             "stock_price": float(stock_price),
-            "quote_time": option_chain.quote_time,
-            "t_years": t_years,
-            "target_expiry": target_expiry,
-            "actual_expiry": actual_expiry_text,
-            "actual_expiry_days": (actual_expiry - reference_date).days,
-            **atm,
+            "quote_time": quote_time,
+            "closing_snapshot": weekly_chain.quote_time is not None,
+            "weekly": read(weekly_chain, weekly_expiry),
+            "monthly": {
+                "actual_expiry_days": (monthly_expiry - reference_date).days,
+                **read(monthly_chain, monthly_expiry, strict=True, stock_price=stock_price),
+            },
         }

@@ -112,11 +112,20 @@ def solve_iv_from_option_mid(
     if target_price <= 0:
         raise ValueError("Option midpoint must be positive")
 
-    intrinsic = max(spot - strike, 0.0) if option_type == "call" else max(strike - spot, 0.0)
+    # A European option's floor is the discounted intrinsic, not max(S - K, 0) or
+    # max(K - S, 0): with a high rate or a long time a deep in-the-money put is rightly
+    # worth less than K - S (a call with dividends less than S - K).
+    discounted_spot = spot * math.exp(-q * t_years)
+    discounted_strike = strike * math.exp(-r * t_years)
+    if option_type == "call":
+        floor = max(discounted_spot - discounted_strike, 0.0)
+    else:
+        floor = max(discounted_strike - discounted_spot, 0.0)
 
-    if target_price + 1e-6 < intrinsic:
+    if target_price + 1e-6 < floor:
         raise RuntimeError(
-            f"{option_type.upper()} {strike:g} midpoint {target_price:.4f} is below intrinsic {intrinsic:.4f}"
+            f"{option_type.upper()} {strike:g} midpoint {target_price:.4f} is below the discounted "
+            f"intrinsic {floor:.4f}"
         )
 
     low = 1e-4

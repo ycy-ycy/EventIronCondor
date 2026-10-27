@@ -5,7 +5,8 @@ from datetime import date
 from ironcondor.core.atm_iv import (
     atm_forward_ivs,
     choose_expiry_on_or_after,
-    choose_quarterly_expiry_9_to_12_months,
+    choose_monthly_expiry_21_to_56_days,
+    choose_weekly_expiry,
 )
 from ironcondor.providers.base import OptionChain, OptionQuote
 
@@ -28,6 +29,13 @@ class ForwardIvTest(unittest.TestCase):
             self.assertAlmostEqual(result["put_iv"], 60.0, places=6)
             self.assertAlmostEqual(result["forward"], true_forward(spot, 0.03, R, T_FRONT), places=6)
             self.assertLessEqual(len(result["strikes"]), 2)
+
+    def test_high_rate_long_time(self):
+        # r 12%, T 1.5 y: the put above F is worth less than K - F e^(-rT) and must still solve.
+        chain = synthetic_chain(100.0, 0.0, 0.12, 1.5, lambda k: 0.30, [80 + 5 * i for i in range(13)])
+        result = atm_forward_ivs(chain, 1.5, 0.12)
+        self.assertAlmostEqual(result["call_iv"], 30.0, places=6)
+        self.assertAlmostEqual(result["put_iv"], 30.0, places=6)
 
     def test_uses_strikes_around_the_forward(self):
         chain = synthetic_chain(101.3, 0.0, R, T_FRONT, lambda k: 0.60, FRONT_STRIKES)
@@ -103,8 +111,48 @@ class ExpiryChoiceTest(unittest.TestCase):
         self.assertEqual(choose_expiry_on_or_after(self.EXPIRIES, date(2026, 11, 1)), date(2026, 11, 6))
         self.assertEqual(choose_expiry_on_or_after(self.EXPIRIES, date(2029, 1, 1)), date(2028, 1, 21))
 
-    def test_quarterly_nine_to_twelve_months(self):
-        self.assertEqual(choose_quarterly_expiry_9_to_12_months(self.EXPIRIES, date(2026, 10, 26)), date(2027, 9, 17))
+    def test_weekly_is_the_friday_never_the_nearest(self):
+        # Monday and Wednesday expiries may come before the earnings: the Friday is the weekly.
+        mon_wed_fri = [date(2026, 10, 26), date(2026, 10, 28), date(2026, 10, 30), date(2026, 11, 2)]
+        self.assertEqual(choose_weekly_expiry(mon_wed_fri, date(2026, 10, 27)), date(2026, 10, 30))
+        # On a weekend it is next week's.
+        self.assertEqual(choose_weekly_expiry([date(2026, 10, 30), date(2026, 11, 6)], date(2026, 10, 31)),
+                         date(2026, 11, 6))
+
+    def test_weekly_thursday_only_when_the_friday_is_not_listed(self):
+        # Good Friday 2027-03-26: the weekly expires Thursday 03-25, not the next Friday.
+        good_friday = [date(2027, 3, 24), date(2027, 3, 25), date(2027, 4, 2)]
+        self.assertEqual(choose_weekly_expiry(good_friday, date(2027, 3, 22)), date(2027, 3, 25))
+        # Dailies with the Friday listed: the Friday.
+        dailies = [date(2026, 10, 28), date(2026, 10, 29), date(2026, 10, 30)]
+        self.assertEqual(choose_weekly_expiry(dailies, date(2026, 10, 27)), date(2026, 10, 30))
+        # Only a Wednesday this week: no weekly, not the Wednesday.
+        with self.assertRaisesRegex(RuntimeError, "No weekly expiry is listed this week"):
+            choose_weekly_expiry([date(2026, 10, 28), date(2026, 11, 6)], date(2026, 10, 27))
+
+    MONTHLY = [date(2026, 10, 30), date(2026, 11, 6), date(2026, 11, 13), date(2026, 11, 20),
+               date(2026, 11, 27), date(2026, 12, 18), date(2027, 1, 15)]
+
+    def test_monthly_21_to_56_days_takes_the_earlier_of_two(self):
+        # 2026-10-27: Nov 20 is 24 days out, Dec 18 is 52; weeklies don't count.
+        self.assertEqual(choose_monthly_expiry_21_to_56_days(self.MONTHLY, date(2026, 10, 27)), date(2026, 11, 20))
+        # Nov 20 is 20 days out on 10-31, so Dec 18 (48 days).
+        self.assertEqual(choose_monthly_expiry_21_to_56_days(self.MONTHLY, date(2026, 10, 31)), date(2026, 12, 18))
+
+    def test_monthly_window_includes_both_ends(self):
+        self.assertEqual(choose_monthly_expiry_21_to_56_days(self.MONTHLY, date(2026, 10, 30)), date(2026, 11, 20))
+        only_december = [date(2026, 10, 30), date(2026, 12, 18)]
+        self.assertEqual(choose_monthly_expiry_21_to_56_days(only_december, date(2026, 10, 23)), date(2026, 12, 18))
+        with self.assertRaisesRegex(RuntimeError, "No standard monthly expiry 21~56 days out"):
+            choose_monthly_expiry_21_to_56_days(only_december, date(2026, 10, 22))
+
+    def test_monthly_thursday_only_for_a_holiday_friday(self):
+        # June 19, 2026 (third Friday) is Juneteenth: the monthly is Thursday June 18.
+        juneteenth = [date(2026, 6, 12), date(2026, 6, 18), date(2026, 6, 26), date(2026, 7, 17)]
+        self.assertEqual(choose_monthly_expiry_21_to_56_days(juneteenth, date(2026, 5, 20)), date(2026, 6, 18))
+        # With daily expiries the Thursday before a listed third Friday is not the monthly.
+        dailies = [date(2026, 11, 19), date(2026, 11, 20), date(2026, 12, 17), date(2026, 12, 18)]
+        self.assertEqual(choose_monthly_expiry_21_to_56_days(dailies, date(2026, 10, 27)), date(2026, 11, 20))
 
 
 if __name__ == "__main__":

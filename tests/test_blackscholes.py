@@ -38,6 +38,19 @@ class BlackScholesTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             solve_iv_from_option_mid(100, 90, 0.1, 0.0, "call", 5.0)
 
+    def test_deep_itm_below_plain_intrinsic_still_solves(self):
+        # High rate, long time: the European put is worth 14.38, under K - S = 20.
+        price = bs_price(80, 100, 2.0, 0.08, 0.25, "put")
+        self.assertLess(price, 20.0)
+        self.assertAlmostEqual(solve_iv_from_option_mid(80, 100, 2.0, 0.08, "put", price), 0.25, places=6)
+        # Dividends do the same to a call: worth less than S - K.
+        price = bs_price(100, 80, 2.0, 0.0, 0.2, "call", q=0.06)
+        self.assertLess(price, 20.0)
+        self.assertAlmostEqual(solve_iv_from_option_mid(100, 80, 2.0, 0.0, "call", price, q=0.06), 0.2, places=6)
+        # Below the discounted intrinsic is still an arbitrage and still rejected.
+        with self.assertRaisesRegex(RuntimeError, "below the discounted intrinsic"):
+            solve_iv_from_option_mid(80, 100, 2.0, 0.08, "put", 5.0)
+
     def test_itm_probabilities_sum_to_one(self):
         call = bs_itm_probability(100, 105, 0.1, 0.04, 0.5, "call")
         put = bs_itm_probability(100, 105, 0.1, 0.04, 0.5, "put")

@@ -20,7 +20,15 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import actions, storage
-from ..core.calculator import INPUT_NAMES, SCENARIOS, average_iv_text, calculate, default_close_date
+from ..core.numbers import fmt_pct_value
+from ..core.calculator import (
+    INPUT_NAMES,
+    SCENARIOS,
+    average_iv_text,
+    calculate,
+    default_close_date,
+    get_normal_iv_decimal,
+)
 from ..core.timeutils import (
     format_date_text,
     OPEN_DAYS,
@@ -37,7 +45,7 @@ from .worker import Task
 
 
 NOTE = (
-    "Notes: IV and yield in %; options expire Fri 16:00 ET. 1Y = FRED DGS1. "
+    "Notes: IV and yield in %; options expire 16:00 ET on the weekly's day. 1Y = FRED DGS1. "
     "IM / 50% prices map log moves with exp(); P&L % is the return on the debit."
 )
 
@@ -72,6 +80,14 @@ class MainWindow(QMainWindow):
     def make_entry(self, name: str) -> QLineEdit:
         edit = QLineEdit(self)
         self.inputs[name] = edit
+        return edit
+
+    def make_fetched_entry(self, name: str) -> QLineEdit:
+        """A saved input only a fetch fills: read-only, looks like an output."""
+        edit = self.make_entry(name)
+        edit.setReadOnly(True)
+        edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        edit.setProperty("output", True)
         return edit
 
     def make_combo(self, name: str, values) -> QComboBox:
@@ -207,28 +223,29 @@ class MainWindow(QMainWindow):
         ))
         r += 1
 
-        # The rate comes before the IVs: IV fetches solve Black-Scholes with it.
-        self.add_row(grid, r, "US 1Y yield (%), blank = 0", self.row_of(
+        # One fetch fills these two rows; both IVs are read at the quote time, so their T runs
+        # from it, not from the open time above. The rate comes first: the IV solves use it.
+        fetched = []
+        for name, sample in (("iv_quote_time", "2026-10-27 16:00"), ("weekly_expiry", "THU 2026-11-26"),
+                             ("monthly_expiry", "THU 2026-11-26")):
+            edit = self.make_fetched_entry(name)
+            edit.setMinimumWidth(edit.fontMetrics().horizontalAdvance(sample) + 14)
+            fetched.append(edit)
+        self.add_row(grid, r, "IV quote time (ET) / weekly / monthly", self.row_of(
+            *fetched,
+            self.make_button("Fetch 1Y + IV", self.fetch_open_ivs, task=True),
+        ))
+        r += 1
+
+        self.add_row(grid, r, "US 1Y (blank = 0) / weekly IV / monthly IV (%)", self.row_of(
             self.make_entry("open_us1y"),
-            self.make_button("Fetch 1Y", self.fetch_open_us1y, task=True),
+            self.make_entry("weekly_iv"),
+            self.make_entry("monthly_iv"),
         ))
         r += 1
 
-        self.add_row(grid, r, "ATM mid call IV / ATM mid put IV (%)", self.row_of(
-            self.make_entry("atm_call_iv"),
-            self.make_entry("atm_put_iv"),
-            self.make_button("Fetch Fri IV", self.fetch_open_iv, task=True),
-        ))
-        r += 1
-
-        self.add_row(grid, r, "LT call IV / LT put IV (%)", self.row_of(
-            self.make_entry("long_term_call_iv"),
-            self.make_entry("long_term_put_iv"),
-            self.make_button("Fetch LT IV", self.fetch_lt_iv, task=True),
-        ))
-        r += 1
-
-        self.add_row(grid, r, "After earnings: log IM % / Down / Up", self.row_of(
+        self.add_row(grid, r, "Normal IV / jump (log IM) % / Down / Up", self.row_of(
+            self.make_output("normal_iv_pct"),
             self.make_output("implied_move_pct"),
             self.make_output("downside_price", tone="loss"),
             self.make_output("upside_price", tone="profit"),
@@ -361,7 +378,7 @@ class MainWindow(QMainWindow):
         self.add_row(grid, r, "ATM mid call IV / ATM mid put IV (%)", self.row_of(
             self.make_entry("close_atm_call_iv"),
             self.make_entry("close_atm_put_iv"),
-            self.make_button("Fetch Fri IV", self.fetch_close_iv, task=True),
+            self.make_button("Fetch weekly IV", self.fetch_close_iv, task=True),
         ))
         r += 1
 
@@ -571,7 +588,15 @@ class MainWindow(QMainWindow):
         self.copy_iv_to_sim("close_atm_call_iv", "close_atm_put_iv", "close ATM IV")
 
     def use_lt_iv_for_sim(self):
-        self.copy_iv_to_sim("long_term_call_iv", "long_term_put_iv", "LT IV")
+        """Sim IV = the normal IV the open side's IV row solves for."""
+        normal_iv = get_normal_iv_decimal(self.snapshot())
+        if normal_iv is None:
+            self.statusBar().showMessage("LT IV is empty; nothing applied.")
+            return
+        sim_iv = fmt_pct_value(normal_iv * 100.0)
+        self.apply_inputs({"sim_iv": sim_iv})
+        self.recalculate_and_cache()
+        self.statusBar().showMessage(f"Sim IV = LT IV {sim_iv}%")
 
     # ------------------------------------------------------------------ background tasks
 
@@ -624,20 +649,14 @@ class MainWindow(QMainWindow):
     def fetch_close_price(self):
         self.run_fetch(actions.fetch_close_price, "Fetching close price…")
 
-    def fetch_open_us1y(self):
-        self.run_fetch(actions.fetch_open_us1y, "Fetching US 1Y…")
-
     def fetch_close_us1y(self):
         self.run_fetch(actions.fetch_close_us1y, "Fetching US 1Y…")
 
-    def fetch_open_iv(self):
-        self.run_fetch(actions.fetch_open_iv, "Fetching this Friday's ATM IV…")
-
-    def fetch_lt_iv(self):
-        self.run_fetch(actions.fetch_lt_iv, "Fetching quarterly LT IV…")
+    def fetch_open_ivs(self):
+        self.run_fetch(actions.fetch_open_ivs, "Fetching US 1Y and IVs…")
 
     def fetch_close_iv(self):
-        self.run_fetch(actions.fetch_close_iv, "Fetching this Friday's ATM IV…")
+        self.run_fetch(actions.fetch_close_iv, "Fetching the weekly's ATM IV…")
 
     def update_open_all(self):
         self.run_fetch(actions.update_open_all, "Updating open…")

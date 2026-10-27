@@ -9,7 +9,25 @@ from datetime import date, timedelta
 
 from .blackscholes import solve_iv_from_option_mid
 from .numbers import finite_positive
-from .timeutils import is_quarterly_standard_expiry_date, is_standard_monthly_expiry_date
+from .timeutils import get_this_friday, is_standard_monthly_expiry_date
+
+
+def choose_weekly_expiry(expiries, reference_date: date) -> date:
+    """This week's standard weekly: its Friday, or the Thursday before it when that Friday
+    isn't listed (a market holiday).
+
+    Never the nearest expiry: a Monday or Wednesday one may expire before the earnings.
+    """
+    friday = get_this_friday(reference_date)
+    if friday in expiries:
+        return friday
+    thursday = friday - timedelta(days=1)
+    if thursday >= reference_date and thursday in expiries:
+        return thursday
+    raise RuntimeError(
+        f"No weekly expiry is listed this week: neither Friday {friday:%Y-%m-%d} nor Thursday "
+        f"{thursday:%Y-%m-%d}"
+    )
 
 
 def choose_expiry_on_or_after(expiries, target_date: date) -> date:
@@ -27,50 +45,31 @@ def choose_expiry_on_or_after(expiries, target_date: date) -> date:
     return sorted(expiries)[-1]
 
 
-def choose_expiry_near_date(expiries, target_date: date) -> date:
-    if not expiries:
-        raise RuntimeError("No option expirations were returned")
-
-    # Prefer the listed expiry closest to the requested horizon.
-    # For 1Y-IV simulation this usually picks LEAPS / long-dated monthlies.
-    return sorted(expiries, key=lambda d: (abs((d - target_date).days), d < target_date))[0]
+# LT IV comes from the standard monthly expiry this many days out (both ends included).
+LT_MIN_DAYS = 21
+LT_MAX_DAYS = 56
 
 
-def choose_quarterly_expiry_9_to_12_months(expiries, reference_date: date) -> date:
-    if not expiries:
-        raise RuntimeError("No option expirations were returned")
+def choose_monthly_expiry_21_to_56_days(expiries, reference_date: date) -> date:
+    """The standard monthly expiry 21~56 days after reference_date; the earlier one if two are."""
+    min_date = reference_date + timedelta(days=LT_MIN_DAYS)
+    max_date = reference_date + timedelta(days=LT_MAX_DAYS)
 
-    parsed = [d for d in expiries if d > reference_date]
-
-    if not parsed:
-        return expiries[0]
-
-    target_date = reference_date + timedelta(days=365)
-    min_date = reference_date + timedelta(days=270)
-    max_date = reference_date + timedelta(days=390)
-
-    quarterly_in_window = [
-        d for d in parsed
-        if min_date <= d <= max_date and is_quarterly_standard_expiry_date(d)
+    monthlies = [
+        d for d in expiries
+        if min_date <= d <= max_date
+        and is_standard_monthly_expiry_date(d)
+        # A Thursday only stands in for a holiday third Friday, not next to a listed one.
+        and not (d.weekday() == 3 and d + timedelta(days=1) in expiries)
     ]
 
-    if quarterly_in_window:
-        return sorted(quarterly_in_window, key=lambda d: abs((d - target_date).days))[0]
+    if not monthlies:
+        raise RuntimeError(
+            f"No standard monthly expiry {LT_MIN_DAYS}~{LT_MAX_DAYS} days out "
+            f"({min_date:%Y-%m-%d}..{max_date:%Y-%m-%d}) is listed"
+        )
 
-    all_quarterlies = [d for d in parsed if is_quarterly_standard_expiry_date(d)]
-
-    if all_quarterlies:
-        return sorted(all_quarterlies, key=lambda d: abs((d - target_date).days))[0]
-
-    monthly_in_window = [
-        d for d in parsed
-        if min_date <= d <= max_date and is_standard_monthly_expiry_date(d)
-    ]
-
-    if monthly_in_window:
-        return sorted(monthly_in_window, key=lambda d: abs((d - target_date).days))[0]
-
-    return choose_expiry_near_date(expiries, target_date)
+    return min(monthlies)
 
 
 def option_mid_and_relative_spread(quote, allow_last_price: bool = True):
@@ -128,7 +127,7 @@ def atm_forward_ivs(option_chain, t_years: float, r: float, strict: bool = False
     4. Call and put IV at each strike with Black-76 on F, interpolated to F.
     Dividends, borrow cost and quote delay all sit inside F, so call and put IV agree.
 
-    strict=True is used for the 9~12M LT IV:
+    strict=True is used for the 21~56-day monthly behind the LT IV:
       - bid/ask midpoint only; never the last trade
       - relative spread <= 60% and some volume/open interest
       - strikes within 8% of F
@@ -170,7 +169,7 @@ def atm_forward_ivs(option_chain, t_years: float, r: float, strict: bool = False
     def fail(detail):
         if strict:
             return RuntimeError(
-                "No reliable quarterly ATM IV. "
+                "No reliable monthly ATM IV for the LT IV. "
                 "I rejected the available quotes instead of filling a questionable IV. "
                 f"First rejection: {detail}"
             )

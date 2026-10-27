@@ -34,7 +34,9 @@ CRWV_V21_FILE = {
     },
 }
 
-# The MSFT trade from the screenshot of the running app (current input layout).
+# The MSFT trade from the screenshot of the running app (current input layout). The
+# screenshot showed this Friday's ATM IV 62.71 / 62.98 and LT IV 32.09; the IV row is what
+# that v23 file converts to: the same normal IV and jump.
 MSFT_INPUTS = {
     "ticker": "MSFT",
     "open_date": "2026-10-26",
@@ -42,11 +44,12 @@ MSFT_INPUTS = {
     "open_hour": "14",
     "open_minute": "39",
     "open_market_price": "532.12",
+    "iv_quote_time": "2026-10-26 14:39",
+    "weekly_expiry": "FRI 2026-10-30",
+    "monthly_expiry": "FRI 2026-11-20",
+    "weekly_iv": "62.845",
+    "monthly_iv": "38.761194",
     "open_us1y": "4.41",
-    "atm_call_iv": "62.71",
-    "atm_put_iv": "62.98",
-    "long_term_call_iv": "32.09",
-    "long_term_put_iv": "32.09",
     "spread": "20",
     "long_put_strike": "510",
     "long_call_strike": "550",

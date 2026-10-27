@@ -23,11 +23,15 @@ from .strategy import (
 )
 from .timeutils import (
     format_date_text,
+    WEEKDAY_INDEX,
     get_this_friday,
     get_weekday_name,
     next_weekday,
     parse_date_text,
-    time_to_friday_4pm_years,
+    parse_datetime_text,
+    parse_expiry_text,
+    time_to_expiry_4pm_years,
+    years_from_now_to_expiry_4pm,
 )
 
 
@@ -53,11 +57,13 @@ INPUT_NAMES = [
     "open_hour",
     "open_minute",
     "open_market_price",
-    "atm_call_iv",
-    "atm_put_iv",
-    # Normal (non-event) IV: sets the implied earnings move on the open side.
-    "long_term_call_iv",
-    "long_term_put_iv",
+    # One IV fetch: the weekly's and the 21~56-day monthly's ATM IV (%), both read at
+    # iv_quote_time (ET). They give the normal IV and the earnings jump, which price the open.
+    "iv_quote_time",
+    "weekly_expiry",
+    "monthly_expiry",
+    "weekly_iv",
+    "monthly_iv",
     "open_us1y",
     "close_us1y",
     "spread",
@@ -90,6 +96,7 @@ OUTPUT_NAMES = [
     "open_downside_breakeven_move_pct",
     "open_upside_breakeven_price",
     "open_upside_breakeven_move_pct",
+    "normal_iv_pct",
     "implied_move_pct",
     "downside_price",
     "upside_price",
@@ -143,12 +150,61 @@ def get_avg_iv_decimal(inputs: Mapping[str, str], call_name: str, put_name: str)
     return put_iv / 100.0
 
 
-def get_atm_iv_decimal(inputs: Mapping[str, str]):
-    return get_avg_iv_decimal(inputs, "atm_call_iv", "atm_put_iv")
+def get_expiry_day(inputs: Mapping[str, str]) -> str:
+    """The weekday the weekly expires: FRI, or THU when that Friday is a holiday.
+
+    From the IV row's weekly expiry; FRI until it has one.
+    """
+    expiry = parse_expiry_text(inputs["weekly_expiry"])
+    return (get_weekday_name(expiry) if expiry else None) or "FRI"
 
 
-def get_long_term_iv_decimal(inputs: Mapping[str, str]):
-    return get_avg_iv_decimal(inputs, "long_term_call_iv", "long_term_put_iv")
+def get_event_split(inputs: Mapping[str, str]):
+    """(normal variance, earnings jump variance J) from the IV row; None while it is incomplete.
+
+    Both IVs are read at iv_quote_time, so T_week and T_month run from it to each expiry:
+        weekly IV² · T_week = normal var · T_week + J
+        month IV² · T_month = normal var · T_month + J
+    ValueError for unusable numbers or dates, or an odd term structure (either one negative).
+    """
+    weekly_iv = parse_float(inputs["weekly_iv"])
+    monthly_iv = parse_float(inputs["monthly_iv"])
+    quote_time = parse_datetime_text(inputs["iv_quote_time"])
+    weekly_expiry = parse_expiry_text(inputs["weekly_expiry"])
+    monthly_expiry = parse_expiry_text(inputs["monthly_expiry"])
+    if weekly_iv is None or monthly_iv is None or quote_time is None or weekly_expiry is None or monthly_expiry is None:
+        return None
+    t_week = years_from_now_to_expiry_4pm(format_date_text(weekly_expiry), reference_dt=quote_time)
+    t_month = years_from_now_to_expiry_4pm(format_date_text(monthly_expiry), reference_dt=quote_time)
+    normal_var, jump = split_event_variance(weekly_iv / 100.0, t_week, monthly_iv / 100.0, t_month)
+    if normal_var < 0 or jump < 0:
+        raise ValueError("Odd term structure")
+    return normal_var, jump
+
+
+def get_normal_iv_decimal(inputs: Mapping[str, str]):
+    """The normal (non-earnings) IV, the LT IV; None when the IV row can't give one."""
+    try:
+        split = get_event_split(inputs)
+    except ValueError:
+        return None
+    return None if split is None else math.sqrt(split[0])
+
+
+def get_open_iv_decimal(inputs: Mapping[str, str]):
+    """The weekly's IV at the open time boxes: sqrt(normal var + J / T); None if unavailable."""
+    try:
+        split = get_event_split(inputs)
+        if split is None:
+            return None
+        t_years = time_to_expiry_4pm_years(
+            inputs["open_day"], inputs["open_hour"], inputs["open_minute"], get_expiry_day(inputs)
+        )
+    except ValueError:
+        return None
+    if t_years <= 0:
+        return None
+    return math.sqrt(split[0] + split[1] / t_years)
 
 
 def get_sim_iv_decimal(inputs: Mapping[str, str]):
@@ -188,14 +244,14 @@ def get_close_r_decimal(inputs: Mapping[str, str]):
 def get_close_day(inputs: Mapping[str, str]) -> str:
     """Close weekday (MON..FRI) from the expected close date; "" when it can't be used.
 
-    The options expire on the Friday of the open week, so the close date must be a weekday
-    from the open date up to that Friday.
+    The options expire on the weekly's day of the open week (Friday, or Thursday when that
+    Friday is a holiday), so the close date must be a weekday from the open date up to it.
     """
     close_date = parse_date_text(inputs["close_date"])
     if close_date is None:
         return ""
     weekday = get_weekday_name(close_date)
-    if weekday is None:
+    if weekday is None or WEEKDAY_INDEX[weekday] > WEEKDAY_INDEX[get_expiry_day(inputs)]:
         return ""
     open_date = parse_date_text(inputs["open_date"])
     if open_date is not None and not (open_date <= close_date <= get_this_friday(open_date)):
@@ -211,14 +267,20 @@ def default_close_date(open_date_text: str) -> str:
     return format_date_text(next_weekday(open_date))
 
 
-def implied_event_variance(current_iv: float, normal_iv: float, t_years: float) -> float:
-    """Earnings-event variance: front-week variance minus normal variance over the same time.
+def split_event_variance(front_iv: float, front_t: float, monthly_iv: float, monthly_t: float):
+    """(normal variance per year, earnings jump variance) from two expiries that both hold the event.
 
-    current_iv * current_iv * T = normal_iv * normal_iv * T + event_variance, with one T (open to
-    Friday 16:00) on both sides. sqrt(event_variance) is a log-return move, so price levels
-    must use exp(±move). Used by both the open panel and the Simulate plot.
+    front_iv² · T_front   = normal_var · T_front   + jump
+    monthly_iv² · T_month = normal_var · T_month   + jump
+    Two equations, two unknowns. Both come out as they are: normal_var < 0 when the front's
+    total variance is above the monthly's, jump < 0 when the front IV is below the monthly IV.
+    sqrt(jump) is a log-return move, so price levels must use exp(±move).
     """
-    return (current_iv * current_iv - normal_iv * normal_iv) * t_years
+    if monthly_t <= front_t:
+        raise ValueError("The monthly expiry must come after the weekly")
+    normal_var = (monthly_iv * monthly_iv * monthly_t - front_iv * front_iv * front_t) / (monthly_t - front_t)
+    jump = (front_iv * front_iv - normal_var) * front_t
+    return normal_var, jump
 
 
 def get_open_debit_for_pnl(inputs: Mapping[str, str], theoretical_open_debit):
@@ -418,11 +480,8 @@ class Calculator:
         long_put = parse_float(self.input("long_put_strike"))
         long_call = parse_float(self.input("long_call_strike"))
         r = get_open_r_decimal(self.inputs)
-        avg_iv = get_atm_iv_decimal(self.inputs)
-        call_iv_raw = parse_float(self.input("atm_call_iv"))
-        put_iv_raw = parse_float(self.input("atm_put_iv"))
-        call_iv = None if avg_iv is None else (avg_iv if call_iv_raw is None else call_iv_raw / 100.0)
-        put_iv = None if avg_iv is None else (avg_iv if put_iv_raw is None else put_iv_raw / 100.0)
+        # One IV, the weekly's at the open time, for both spreads.
+        call_iv = put_iv = get_open_iv_decimal(self.inputs)
 
         put_debit = None
         call_debit = None
@@ -438,10 +497,11 @@ class Calculator:
             if long_put <= 0 or short_put <= 0:
                 raise ValueError("Invalid put strikes")
 
-            t_before = time_to_friday_4pm_years(
+            t_before = time_to_expiry_4pm_years(
                 self.input("open_day"),
                 self.input("open_hour"),
                 self.input("open_minute"),
+                get_expiry_day(self.inputs),
             )
 
             long_put_price = bs_price(
@@ -473,10 +533,11 @@ class Calculator:
             if long_call <= 0 or short_call <= 0:
                 raise ValueError("Invalid call strikes")
 
-            t_before = time_to_friday_4pm_years(
+            t_before = time_to_expiry_4pm_years(
                 self.input("open_day"),
                 self.input("open_hour"),
                 self.input("open_minute"),
+                get_expiry_day(self.inputs),
             )
 
             long_call_price = bs_price(
@@ -552,24 +613,21 @@ class Calculator:
             self.set_output_style("open_upside_breakeven_move_pct", None)
 
         try:
-            current_iv = avg_iv
-            normal_iv = get_long_term_iv_decimal(self.inputs)
+            split = get_event_split(self.inputs)
+        except ValueError:
+            split = None
 
-            if spot is None or spot <= 0 or current_iv is None or normal_iv is None:
+        if split is None:
+            self.clear_output("normal_iv_pct")
+        else:
+            self.set_output("normal_iv_pct", fmt_pct(math.sqrt(split[0]) * 100.0))
+
+        try:
+            if spot is None or spot <= 0 or split is None:
                 raise ValueError("Missing implied move inputs")
 
-            t_before = time_to_friday_4pm_years(
-                self.input("open_day"),
-                self.input("open_hour"),
-                self.input("open_minute"),
-            )
-
-            event_variance = implied_event_variance(current_iv, normal_iv, t_before)
-
-            if event_variance < 0:
-                raise ValueError("Negative event variance")
-
-            implied_move = math.sqrt(event_variance)
+            # The jump doesn't shrink with time: the move is sqrt(J) whenever the open is.
+            implied_move = math.sqrt(split[1])
 
             downside = price_from_log_move(spot, -implied_move)
             prob50_downside = price_from_log_move(spot, -PROB50_Z * implied_move)
@@ -620,17 +678,19 @@ class Calculator:
             if spot is None or spot <= 0:
                 raise ValueError("Missing open market price")
 
-            t_exp = time_to_friday_4pm_years(
+            t_exp = time_to_expiry_4pm_years(
                 self.input("open_day"),
                 self.input("open_hour"),
                 self.input("open_minute"),
+                get_expiry_day(self.inputs),
             )
             if t_exp < 0:
                 raise ValueError("Invalid time to expiry")
 
-            avg_iv = get_atm_iv_decimal(self.inputs)
-            if avg_iv is None or avg_iv <= 0:
-                raise ValueError("Missing ATM IV")
+            avg_iv = get_open_iv_decimal(self.inputs)
+            if avg_iv is None:
+                raise ValueError("Missing IVs")
+            call_iv = put_iv = avg_iv
 
             exp_move = avg_iv * math.sqrt(t_exp)
             exp_move_pct = exp_move * 100.0
@@ -661,10 +721,6 @@ class Calculator:
             if short_put <= 0 or short_call <= 0:
                 raise ValueError("Invalid short strikes")
 
-            call_iv_raw = parse_float(self.input("atm_call_iv"))
-            put_iv_raw = parse_float(self.input("atm_put_iv"))
-            call_iv = avg_iv if call_iv_raw is None else call_iv_raw / 100.0
-            put_iv = avg_iv if put_iv_raw is None else put_iv_raw / 100.0
             r = get_open_r_decimal(self.inputs)
 
             long_call_prob = bs_itm_probability(
@@ -764,10 +820,11 @@ class Calculator:
 
             close_day = get_close_day(self.inputs)
 
-            t_after = time_to_friday_4pm_years(
+            t_after = time_to_expiry_4pm_years(
                 close_day,
                 self.input("close_hour"),
                 self.input("close_minute"),
+                get_expiry_day(self.inputs),
             )
 
             put_credit, call_credit = strategy_put_call_credit(
@@ -862,10 +919,11 @@ class Calculator:
 
             close_day = get_close_day(self.inputs)
 
-            t_930 = time_to_friday_4pm_years(
+            t_930 = time_to_expiry_4pm_years(
                 close_day,
                 "9",
                 "30",
+                get_expiry_day(self.inputs),
             )
 
             price_levels = {
@@ -956,10 +1014,11 @@ class Calculator:
             r = get_close_r_decimal(self.inputs)
             close_day = get_close_day(self.inputs)
 
-            t_930 = time_to_friday_4pm_years(
+            t_930 = time_to_expiry_4pm_years(
                 close_day,
                 "9",
                 "30",
+                get_expiry_day(self.inputs),
             )
 
             def pnl_at_price(price: float) -> float:

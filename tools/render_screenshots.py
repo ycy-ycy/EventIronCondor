@@ -41,7 +41,9 @@ from ironcondor.gui.widgets import STYLESHEET  # noqa: E402
 
 # A real trade (CRWV earnings, May 2026): opened Thu 15:55 for a 0.73 debit, closed Fri
 # ~10:30 at 114.51 for a 0.95 credit. The close-side IV was not recorded, so the close is
-# priced with the LT IV and the Close ATM IV boxes stay empty.
+# priced with the LT IV and the Close ATM IV boxes stay empty. Nor was the monthly IV: the
+# IV row holds the open's weekly ATM IV (282.03 / 277.50 averaged) and the monthly IV that
+# solves back to the 82.86% LT IV used then.
 EXAMPLE = {
     "ticker": "CRWV",
     "open_date": "2026-05-07",
@@ -49,11 +51,12 @@ EXAMPLE = {
     "open_hour": "15",
     "open_minute": "55",
     "open_market_price": "127.92",
+    "iv_quote_time": "2026-05-07 15:55",
+    "weekly_expiry": "FRI 2026-05-08",
+    "monthly_expiry": "FRI 2026-06-19",
     "open_us1y": "3.73",
-    "atm_call_iv": "282.03",
-    "atm_put_iv": "277.50",
-    "long_term_call_iv": "82.86",
-    "long_term_put_iv": "82.86",
+    "weekly_iv": "279.77",
+    "monthly_iv": "92.37",
     "spread": "1",
     "long_put_strike": "122",
     "long_call_strike": "134",

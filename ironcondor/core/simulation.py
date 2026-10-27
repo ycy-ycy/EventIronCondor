@@ -6,17 +6,16 @@ from typing import Mapping
 from .blackscholes import price_from_log_move
 from .calculator import (
     PROB50_Z,
-    get_atm_iv_decimal,
     get_close_day,
     get_close_r_decimal,
-    get_long_term_iv_decimal,
+    get_event_split,
+    get_expiry_day,
     get_open_debit_for_pnl,
     get_sim_iv_decimal,
-    implied_event_variance,
 )
 from .numbers import parse_float
 from .strategy import strategy_credit
-from .timeutils import time_to_friday_4pm_years
+from .timeutils import time_to_expiry_4pm_years
 
 
 PRICE_POINTS = 321
@@ -30,8 +29,10 @@ def get_simulation_inputs(inputs: Mapping[str, str], theoretical_open_debit=None
     spread = parse_float(inputs["spread"])
     long_put = parse_float(inputs["long_put_strike"])
     long_call = parse_float(inputs["long_call_strike"])
-    normal_iv = get_long_term_iv_decimal(inputs)
-    current_iv = get_atm_iv_decimal(inputs)
+    try:
+        split = get_event_split(inputs)
+    except ValueError:
+        split = None
     sim_iv = get_sim_iv_decimal(inputs)
     open_debit = get_open_debit_for_pnl(inputs, theoretical_open_debit)
     r = get_close_r_decimal(inputs)
@@ -42,14 +43,13 @@ def get_simulation_inputs(inputs: Mapping[str, str], theoretical_open_debit=None
         or spread is None
         or long_put is None
         or long_call is None
-        or normal_iv is None
-        or current_iv is None
+        or split is None
         or sim_iv is None
         or open_debit is None
         or not close_day
     ):
         raise ValueError(
-            "Missing inputs. Please fill open price, strikes, spread, open ATM IV, LT IV, sim IV, and a usable expected close date first."
+            "Missing inputs. Please fill open price, strikes, spread, the open IVs (a usable term structure), sim IV, and a usable expected close date first."
         )
 
     if open_spot <= 0 or spread <= 0 or open_debit <= 0:
@@ -58,17 +58,7 @@ def get_simulation_inputs(inputs: Mapping[str, str], theoretical_open_debit=None
     short_put = long_put - spread
     short_call = long_call + spread
 
-    t_before = time_to_friday_4pm_years(
-        inputs["open_day"],
-        inputs["open_hour"],
-        inputs["open_minute"],
-    )
-
-    event_variance = implied_event_variance(current_iv, normal_iv, t_before)
-    if event_variance < 0:
-        raise ValueError("Implied move is unavailable because event variance is negative.")
-
-    implied_move = math.sqrt(event_variance)
+    implied_move = math.sqrt(split[1])
 
     return {
         "ticker": inputs["ticker"].strip().upper(),
@@ -78,13 +68,12 @@ def get_simulation_inputs(inputs: Mapping[str, str], theoretical_open_debit=None
         "short_put": short_put,
         "long_call": long_call,
         "short_call": short_call,
-        "normal_iv": normal_iv,
-        "current_iv": current_iv,
         "sim_iv": sim_iv,
         "open_debit": open_debit,
         "r": r,
         "close_day": close_day,
         "close_date": inputs["close_date"].strip(),
+        "expiry_day": get_expiry_day(inputs),
         "implied_move": implied_move,
     }
 
@@ -97,10 +86,11 @@ def pnl_pct_at_time_and_price(price: float, hour_value: float, sim_inputs: dict)
     hour = total_minutes // 60
     minute = total_minutes % 60
 
-    t_years = time_to_friday_4pm_years(
+    t_years = time_to_expiry_4pm_years(
         sim_inputs["close_day"],
         str(hour),
         f"{minute:02d}",
+        sim_inputs["expiry_day"],
     )
 
     total_credit = strategy_credit(

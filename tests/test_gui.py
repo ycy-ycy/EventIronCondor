@@ -56,8 +56,8 @@ class MainWindowTest(unittest.TestCase):
         return next(b for b in self.window.findChildren(QPushButton) if b.text() == text)
 
     def test_shows_the_calculated_values(self):
-        self.assertEqual(self.window.outputs["total_debit"].text(), "7.9891")
-        self.assertEqual(self.window.outputs["pnl_pct"].text(), "(79.30%)")
+        self.assertEqual(self.window.outputs["total_debit"].text(), "7.9872")
+        self.assertEqual(self.window.outputs["pnl_pct"].text(), "(79.29%)")
         self.assertEqual(self.window.outputs["close_day"].text(), "TUE")
         self.assertEqual(self.window.outputs["pnl_pct"]._tone, "loss")
 
