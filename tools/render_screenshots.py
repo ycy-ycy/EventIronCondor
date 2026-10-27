@@ -1,6 +1,6 @@
 """Render the README screenshots (docs/main-window.png, docs/simulation.png).
 
-Uses a fixed MSFT example trade, renders offscreen at 2x with Segoe UI, and never touches
+Uses a real CRWV example trade, renders offscreen at 2x with Segoe UI, and never touches
 your data/_cache.json or settings.json. Run it with the project's environment:
 
     .venv\\python.exe tools\\render_screenshots.py          (conda-built .venv)
@@ -39,35 +39,38 @@ from ironcondor.gui.main_window import MainWindow  # noqa: E402
 from ironcondor.gui.plot_window import PnlContourWindow  # noqa: E402
 from ironcondor.gui.widgets import STYLESHEET  # noqa: E402
 
+# A real trade (CRWV earnings, May 2026): opened Thu 15:55 for a 0.73 debit, closed Fri
+# ~10:30 at 114.51 for a 0.95 credit. The close-side IV was not recorded, so the close is
+# priced with the LT IV and the Close ATM IV boxes stay empty.
 EXAMPLE = {
-    "ticker": "MSFT",
-    "open_date": "2026-10-26",
-    "open_day": "MON",
-    "open_hour": "14",
-    "open_minute": "39",
-    "open_market_price": "532.12",
-    "open_us1y": "4.41",
-    "atm_call_iv": "62.71",
-    "atm_put_iv": "62.98",
-    "long_term_call_iv": "32.09",
-    "long_term_put_iv": "32.09",
-    "spread": "20",
-    "long_put_strike": "510",
-    "long_call_strike": "550",
-    "open_debit_override": "",
-    "close_day": "TUE",
-    "close_hour": "9",
+    "ticker": "CRWV",
+    "open_date": "2026-05-07",
+    "open_day": "THU",
+    "open_hour": "15",
+    "open_minute": "55",
+    "open_market_price": "127.92",
+    "open_us1y": "3.73",
+    "atm_call_iv": "282.03",
+    "atm_put_iv": "277.50",
+    "long_term_call_iv": "82.86",
+    "long_term_put_iv": "82.86",
+    "spread": "1",
+    "long_put_strike": "122",
+    "long_call_strike": "134",
+    "open_debit_override": "0.73",
+    "close_date": "2026-05-08",
+    "close_hour": "10",
     "close_minute": "30",
-    "close_market_price": "531.92",
-    "close_us1y": "4.41",
-    "close_atm_call_iv": "112.81",
-    "close_atm_put_iv": "112.52",
-    "sim_iv": "32.09",
+    "close_market_price": "114.51",
+    "close_us1y": "3.73",
+    "close_atm_call_iv": "",
+    "close_atm_put_iv": "",
+    "sim_iv": "82.86",
 }
 
-# Where the Simulate screenshot shows its hover readout.
-HOVER_TIME = 14 + 5 / 60
-HOVER_PRICE = 542.55
+# Where the Simulate screenshot shows its hover readout: the actual exit.
+HOVER_TIME = 10.5
+HOVER_PRICE = 114.51
 
 
 def main():

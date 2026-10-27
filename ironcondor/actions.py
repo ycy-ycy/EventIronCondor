@@ -8,11 +8,23 @@ summary for the status bar.
 from .core.calculator import average_iv_text, get_close_day, get_close_r_decimal, get_open_r_decimal
 from .core.numbers import finite_positive, fmt_pct_value, fmt_price, parse_float
 from .core.timeutils import (
+    format_date_text,
     get_current_date_day_hour_minute_for_open,
     get_now,
     get_weekday_name,
     time_to_friday_4pm_years,
 )
+
+
+def require_close_day(inputs: dict) -> str:
+    """Close weekday from the expected close date, or a clear error."""
+    close_day = get_close_day(inputs)
+    if not close_day:
+        raise ValueError(
+            "Set an expected close date: a weekday from the open date up to that week's "
+            "Friday (when the options expire)."
+        )
+    return close_day
 
 
 def describe_iv(data: dict) -> str:
@@ -141,7 +153,7 @@ def fetch_lt_iv(inputs: dict, market):
 def fetch_close_iv(inputs: dict, market):
     ticker = inputs["ticker"]
     r = get_close_r_decimal(inputs)
-    close_day = get_close_day(inputs)
+    close_day = require_close_day(inputs)
     t_years = time_to_friday_4pm_years(
         close_day,
         inputs["close_hour"],
@@ -191,10 +203,9 @@ def update_close_all(inputs: dict, market):
     hour = str(now.hour)
     minute = f"{now.minute:02d}"
 
-    # Closing now: today's weekday (on weekends keep the chosen close weekday).
-    close_day = get_weekday_name(now.date()) or get_close_day(inputs)
-    if not close_day:
-        raise ValueError("Missing close weekday. Please pick the close weekday first.")
+    # Closing now: today is the close date (on weekends keep the expected close date).
+    close_date = format_date_text(now.date()) if get_weekday_name(now.date()) else inputs["close_date"]
+    close_day = require_close_day(dict(inputs, close_date=close_date))
 
     price = close_market_price(inputs, market, ticker, prefer_existing=False)
     us1y = market.us1y_yield_percent()
@@ -208,7 +219,7 @@ def update_close_all(inputs: dict, market):
     call_iv = fmt_pct_value(data["call_iv"])
     put_iv = fmt_pct_value(data["put_iv"])
     updates = {
-        "close_day": close_day,
+        "close_date": close_date,
         "close_hour": hour,
         "close_minute": minute,
         "close_market_price": fmt_price(price),
@@ -223,9 +234,7 @@ def update_close_all(inputs: dict, market):
 
 def simulate_close_930(inputs: dict, market):
     ticker = inputs["ticker"]
-    close_day = get_close_day(inputs)
-    if not close_day:
-        raise ValueError("Missing close weekday. Please pick the close weekday first.")
+    close_day = require_close_day(inputs)
 
     lt_iv = average_iv_text(inputs["long_term_call_iv"], inputs["long_term_put_iv"])
     if not lt_iv:
@@ -243,6 +252,6 @@ def simulate_close_930(inputs: dict, market):
         "sim_iv": lt_iv,
     }
     return updates, (
-        f"Simulating {close_day} 09:30 with LT IV {lt_iv}%, "
+        f"Simulating {close_day} {inputs['close_date'].strip()} 09:30 with LT IV {lt_iv}%, "
         f"price {fmt_price(price)}, US1Y {fmt_pct_value(us1y)}%"
     )

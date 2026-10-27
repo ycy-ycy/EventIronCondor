@@ -2,11 +2,17 @@
 
 A Windows desktop calculator (PyQt6) for trading a **long iron condor around an earnings
 report**. Before the report you buy a put spread below the price and a call spread above
-it. You sell both the next morning, after the stock has moved. The app prices both sides,
-estimates the earnings move the options imply, and shows what the position is worth for
-any stock price and time on the day after.
+it. You sell both after the stock has moved, usually the next morning. The app prices both
+sides, estimates the earnings move the options imply, and shows what the position is worth
+for any stock price and time on the close day.
 
 ![Main window: open side on the left, close side on the right](docs/main-window.png)
+
+*The screenshots show a real trade: CRWV earnings in May 2026. It was opened Thursday
+at 15:55 for a 0.73 debit and closed Friday at about 10:30 with the stock at 114.51. At
+that exit the model, using the LT IV as Sim IV, shows a 0.998 credit (+36.7%). The actual
+fill was 0.95 (+30.1%): the bid/ask on the deep in-the-money put spread cost the rest.
+The close-side IV wasn't recorded, so those boxes are empty.*
 
 ## What it does
 
@@ -28,17 +34,21 @@ any stock price and time on the day after.
 
 **Close side (right)**
 
-- **Update close** marks the position now: weekday, time, price, rate and current ATM
-  IV, which it also copies into Sim IV. **Simulate 9:30 (LT IV)** sets up the usual exit
-  instead: the next morning at 09:30, priced with the normal IV.
+- **Expected close date** sets when you plan to exit. It defaults to the trading day
+  after the open, but can be any weekday from the open date up to that week's Friday,
+  when the options expire. The weekday box follows the date; it shows `n/a`, and the
+  close side stays blank, when the date can't be used.
+- **Update close** marks the position now: today's date, the time, price, rate and
+  current ATM IV, which it also copies into Sim IV. **Simulate 9:30 (LT IV)** sets up the
+  usual exit instead: 09:30 on the expected close date, priced with the normal IV.
 - **Sim IV** is the one IV used to price the close. The **Current IV** and **LT IV**
   buttons copy those values in, or you can type any number.
 - **Results:** put/call/total credit, P&L in $ and %, and the stock prices where the
   09:30 P&L breaks even.
-- **T+1 09:30 scenario table:** credit and P&L at the implied-move prices, the
+- **Close-day 09:30 scenario table:** credit and P&L at the implied-move prices, the
   50%-probability prices, each strike, and the middle.
 
-**Simulate** opens a P&L % map over the next day (09:30–16:00) and a price range of ±2
+**Simulate** opens a P&L % map over the close day (09:30–16:00) and a price range of ±2
 implied moves. It marks the breakevens and the strike, implied-move and 50% lines.
 Hovering shows the exact numbers; clicking opens price and time slices through that
 point.
@@ -85,7 +95,8 @@ Without the script: `pip install -r requirements.txt`, then `python main.py`.
 - r is the US 1Y yield (a blank box means 0).
 - The debit uses the open price and time: the put spread at the ATM put IV, the call
   spread at the ATM call IV.
-- The credit uses the close price, weekday and time, with **Sim IV** on every leg.
+- The credit uses the close price, the weekday of the expected close date and the close
+  time, with **Sim IV** on every leg.
 - P&L = credit − debit; P&L % is the return on the debit.
 
 **Implied earnings move.**
@@ -133,7 +144,7 @@ pinned time.
 
 - **Free data is about 15 minutes delayed** (both yfinance and Cboe):
   - An open at 15:55 sees the 15:40 quotes.
-  - Until about 09:45 on the morning after, you still see the previous close.
+  - Until about 09:45 on the close morning, you still see the previous close.
   - For live marks, add a real-time source such as a broker API (see below).
 - **Model simplifications:**
   - The debit and credit use one IV per side for all four legs. Real wing prices include
@@ -146,6 +157,8 @@ pinned time.
   - The pre-market path of the after-close pinning has only been tested with constructed
     timestamps.
   - Early-close days (13:00) are still pinned at 16:00.
+  - Market holidays aren't known when the default close date is picked: it's simply
+    the next weekday, so change it yourself around holidays.
   - On Friday after the close, this week's options have expired, so **Fetch Fri IV**
     reports an error.
 - **LT IV may refuse thin names.** It rejects wide, dead or inconsistent quotes, for
@@ -190,7 +203,7 @@ run.ps1                   environment setup + launcher
 requirements.txt
 docs/                     README screenshots
 tools/
-  render_screenshots.py   re-renders docs/*.png from an MSFT example trade
+  render_screenshots.py   re-renders docs/*.png from the CRWV example trade
                           (offscreen; leaves your cache and settings alone)
 ironcondor/
   core/                   pure math, no GUI or network

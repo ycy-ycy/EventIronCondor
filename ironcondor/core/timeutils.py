@@ -177,19 +177,39 @@ def get_current_date_day_hour_minute_for_open():
     )
 
 
+DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%Y%m%d")
+
+
+def parse_date_text(text: str):
+    """A date typed as YYYY-MM-DD, YYYY/MM/DD or YYYYMMDD; None if blank or unparsable."""
+    text = (text or "").strip()
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
 def parse_open_date_for_filename(open_date_text: str) -> str:
     text = open_date_text.strip()
 
     if not text:
         raise ValueError("Missing open date")
 
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y%m%d"):
-        try:
-            return datetime.strptime(text, fmt).strftime("%Y%m%d")
-        except ValueError:
-            pass
+    value = parse_date_text(text)
+    if value is not None:
+        return value.strftime("%Y%m%d")
 
     raise ValueError("Open date must be YYYY-MM-DD, YYYY/MM/DD, or YYYYMMDD")
+
+
+def next_weekday(value: date) -> date:
+    """The next Monday-Friday date after value (market holidays are not known)."""
+    value += timedelta(days=1)
+    while value.weekday() > 4:
+        value += timedelta(days=1)
+    return value
 
 
 def third_friday(year: int, month: int) -> date:

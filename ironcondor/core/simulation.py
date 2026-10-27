@@ -1,4 +1,4 @@
-"""T+1 P&L surface (time of day x stock price) used by the Simulate plot."""
+"""Close-day P&L surface (time of day x stock price) used by the Simulate plot."""
 
 import math
 from typing import Mapping
@@ -49,7 +49,7 @@ def get_simulation_inputs(inputs: Mapping[str, str], theoretical_open_debit=None
         or not close_day
     ):
         raise ValueError(
-            "Missing inputs. Please fill open price, strikes, spread, open ATM IV, LT IV, sim IV, and close weekday first."
+            "Missing inputs. Please fill open price, strikes, spread, open ATM IV, LT IV, sim IV, and a usable expected close date first."
         )
 
     if open_spot <= 0 or spread <= 0 or open_debit <= 0:
@@ -84,6 +84,7 @@ def get_simulation_inputs(inputs: Mapping[str, str], theoretical_open_debit=None
         "open_debit": open_debit,
         "r": r,
         "close_day": close_day,
+        "close_date": inputs["close_date"].strip(),
         "implied_move": implied_move,
     }
 

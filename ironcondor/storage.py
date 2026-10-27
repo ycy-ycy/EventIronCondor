@@ -3,16 +3,26 @@
 import copy
 import json
 import re
+from datetime import timedelta
 from pathlib import Path
 
-from .core.calculator import INPUT_NAMES, average_iv_text, default_close_day
-from .core.timeutils import get_now, get_today_date_text, parse_open_date_for_filename
+from .core.calculator import INPUT_NAMES, average_iv_text, default_close_date
+from .core.timeutils import (
+    NEXT_DAY,
+    WEEKDAY_INDEX,
+    format_date_text,
+    get_now,
+    get_today_date_text,
+    parse_date_text,
+    parse_open_date_for_filename,
+)
 from .paths import CACHE_FILE, DATA_DIR, SETTINGS_FILE, ensure_data_dir
 from .providers import DEFAULT_SOURCES
 
 
 # 22: close_day, close_atm_*_iv and sim_iv inputs; LT IV moved to the open side.
-CACHE_VERSION = 22
+# 23: close_date (expected close date) replaces the close_day weekday input.
+CACHE_VERSION = 23
 
 DEFAULT_SETTINGS = {
     "sources": dict(DEFAULT_SOURCES),
@@ -28,7 +38,7 @@ def default_inputs() -> dict:
         "open_day": "MON",
         "open_hour": "16",
         "open_minute": "00",
-        "close_day": default_close_day("MON"),
+        "close_date": default_close_date(get_today_date_text()),
         "close_hour": "9",
         "close_minute": "30",
     })
@@ -41,6 +51,15 @@ def serialize_file(inputs: dict) -> dict:
         "saved_at": get_now().isoformat(),
         "inputs": {name: inputs.get(name, "") for name in INPUT_NAMES},
     }
+
+
+def close_date_in_open_week(open_date_text: str, weekday: str) -> str:
+    """The date with that weekday in the open date's week ("" if either is unusable)."""
+    open_date = parse_date_text(open_date_text)
+    if open_date is None or weekday not in WEEKDAY_INDEX:
+        return ""
+    monday = open_date - timedelta(days=open_date.weekday())
+    return format_date_text(monday + timedelta(days=WEEKDAY_INDEX[weekday]))
 
 
 def inputs_from_saved(data) -> dict:
@@ -76,10 +95,12 @@ def inputs_from_saved(data) -> dict:
         values["long_term_call_iv"] = text(legacy_long_term_iv)
         values["long_term_put_iv"] = text(legacy_long_term_iv)
 
-    # Before version 22 the close weekday was always the day after the open, and the
-    # close panel was priced with the mean LT IV. Keep old files giving the same results.
-    if "close_day" not in inputs:
-        values["close_day"] = default_close_day(values["open_day"])
+    # Before version 23 the close was a weekday of the open week (before 22, always the day
+    # after the open), and before 22 the close panel was priced with the mean LT IV. Keep
+    # old files giving the same results.
+    if "close_date" not in inputs:
+        weekday = text(inputs.get("close_day")) or NEXT_DAY.get(values["open_day"], "")
+        values["close_date"] = close_date_in_open_week(values["open_date"], weekday)
     if "sim_iv" not in inputs:
         try:
             if "sim_call_iv" in inputs or "sim_put_iv" in inputs:

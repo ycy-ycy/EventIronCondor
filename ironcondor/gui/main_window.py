@@ -20,9 +20,9 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import actions, storage
-from ..core.calculator import INPUT_NAMES, SCENARIOS, average_iv_text, calculate, default_close_day
+from ..core.calculator import INPUT_NAMES, SCENARIOS, average_iv_text, calculate, default_close_date
 from ..core.timeutils import (
-    CLOSE_DAYS,
+    format_date_text,
     OPEN_DAYS,
     get_current_date_day_hour_minute_for_open,
     get_now,
@@ -323,6 +323,9 @@ class MainWindow(QMainWindow):
     def _build_right_column(self, grid: QGridLayout):
         r = 0
 
+        self.add_row(grid, r, "Expected close date (YYYY-MM-DD)", self.make_entry("close_date"))
+        r += 1
+
         update_row = QWidget()
         update_layout = QHBoxLayout(update_row)
         update_layout.setContentsMargins(0, 0, 0, 0)
@@ -332,11 +335,14 @@ class MainWindow(QMainWindow):
         r += 1
 
         self.add_row(grid, r, "Weekday / time (24h ET)", self.row_of(
-            self.make_combo("close_day", CLOSE_DAYS),
+            self.make_output("close_day", min_chars=5),
             self.make_time_input("close_hour", "close_minute"),
             None,
             self.make_button("Now (ET)", self.set_close_now),
         ))
+        # The weekday follows the expected close date; keep its box narrow.
+        self.outputs["close_day"].setMaximumWidth(self.outputs["close_day"].minimumWidth() + 10)
+        self.outputs["close_day"].setAlignment(Qt.AlignmentFlag.AlignCenter)
         r += 1
 
         self.add_row(grid, r, "Current market price / log Change %", self.row_of(
@@ -399,7 +405,7 @@ class MainWindow(QMainWindow):
         scenario_header = QWidget()
         header_layout = QHBoxLayout(scenario_header)
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.addWidget(self.section_label("T+1 09:30 AM ET Scenario P&L"), 1)
+        header_layout.addWidget(self.section_label("Close-day 09:30 ET Scenario P&L"), 1)
         header_layout.addWidget(self.make_button("Simulate", self.plot_pnl_contour, task=True), 0)
         grid.addWidget(scenario_header, r, 0, 1, 2)
         r += 1
@@ -449,8 +455,8 @@ class MainWindow(QMainWindow):
 
     def _bind_inputs(self):
         for name, widget in self.inputs.items():
-            if name == "open_day":
-                widget.currentTextChanged.connect(self.on_open_day_change)
+            if name == "open_date":
+                widget.textChanged.connect(self.on_open_date_change)
             elif isinstance(widget, QComboBox):
                 widget.currentTextChanged.connect(self.on_input_change)
             else:
@@ -474,9 +480,11 @@ class MainWindow(QMainWindow):
 
     def apply_inputs(self, values: dict):
         """Set several inputs at once without recalculating after each one."""
-        if "open_day" in values and "close_day" not in values:
-            # The close normally happens the day after the open; the user can still pick another day.
-            values = dict(values, close_day=default_close_day(values["open_day"]) or self.input_text("close_day"))
+        if "open_date" in values and "close_date" not in values:
+            # The close is usually the trading day after the open; the user can type another date.
+            close_date = default_close_date(values["open_date"])
+            if close_date:
+                values = dict(values, close_date=close_date)
 
         self._loading = True
         try:
@@ -493,11 +501,11 @@ class MainWindow(QMainWindow):
         self.recalculate()
         self.write_cache()
 
-    def on_open_day_change(self, open_day: str):
+    def on_open_date_change(self, open_date: str):
         if self._loading:
             return
 
-        self.apply_inputs({"open_day": open_day})
+        self.apply_inputs({"open_date": open_date})
         self.recalculate_and_cache()
 
     # ------------------------------------------------------------------ calculation
@@ -540,9 +548,8 @@ class MainWindow(QMainWindow):
             "close_hour": str(now.hour),
             "close_minute": f"{now.minute:02d}",
         }
-        weekday = get_weekday_name(now.date())
-        if weekday:
-            values["close_day"] = weekday
+        if get_weekday_name(now.date()):
+            values["close_date"] = format_date_text(now.date())
         self.apply_inputs(values)
         self.recalculate_and_cache()
 

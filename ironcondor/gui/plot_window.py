@@ -1,4 +1,4 @@
-"""Simulate: T+1 P&L % contour window and the click-through slice window."""
+"""Simulate: close-day P&L % contour window and the click-through slice window."""
 
 import math
 
@@ -31,6 +31,11 @@ def strike_line_specs(surface: dict):
         (surface["implied_move_down"], "-1x IM", "#1f4e79", (0, (2, 3)), 0.65),
         (surface["implied_move_up"], "+1x IM", "#1f4e79", (0, (2, 3)), 0.65),
     ]
+
+
+def close_day_label(sim_inputs: dict) -> str:
+    """e.g. "Time on FRI 2026-05-08 (ET)"."""
+    return f"Time on {sim_inputs['close_day']} {sim_inputs['close_date']} (ET)"
 
 
 def format_hour(hour_value: float) -> str:
@@ -231,7 +236,7 @@ class PnlContourWindow(FigureWindow):
 
         ax.set_xticks(XTICKS, XTICKLABELS)
 
-        ax.set_xlabel("Time on T+1 (ET)")
+        ax.set_xlabel(close_day_label(sim_inputs))
         ax.set_ylabel("Stock price ($)")
 
         title = (
@@ -359,7 +364,7 @@ class PnlSliceWindow(FigureWindow):
         ax_time.axhline(0.0, color="black", linewidth=0.8, linestyle="--", alpha=0.7)
         ax_time.axvline(click_time, color="black", linewidth=0.8, linestyle=":", alpha=0.7)
         ax_time.plot([click_time], [click_metrics['pnl_pct']], marker="o")
-        ax_time.set_xlabel("Time on T+1 (ET)")
+        ax_time.set_xlabel(close_day_label(sim_inputs))
         ax_time.set_ylabel("P&L %")
         ax_time.set_title(f"P&L % vs time at stock price ${click_price:.2f}")
         ax_time.grid(True, alpha=0.25)

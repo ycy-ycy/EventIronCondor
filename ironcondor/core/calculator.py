@@ -21,7 +21,14 @@ from .strategy import (
     strategy_put_call_credit,
     find_breakeven_in_range,
 )
-from .timeutils import NEXT_DAY, time_to_friday_4pm_years
+from .timeutils import (
+    format_date_text,
+    get_this_friday,
+    get_weekday_name,
+    next_weekday,
+    parse_date_text,
+    time_to_friday_4pm_years,
+)
 
 
 PROB50_Z = 0.6744897501960817
@@ -56,7 +63,8 @@ INPUT_NAMES = [
     "spread",
     "long_put_strike",
     "long_call_strike",
-    "close_day",
+    # Expected close date; the close weekday comes from it.
+    "close_date",
     "close_hour",
     "close_minute",
     "close_market_price",
@@ -97,6 +105,7 @@ OUTPUT_NAMES = [
     "exp_breakeven_put_prob",
     "exp_short_call_itm_prob",
     "exp_short_put_itm_prob",
+    "close_day",
     "put_credit",
     "call_credit",
     "total_credit",
@@ -177,11 +186,29 @@ def get_close_r_decimal(inputs: Mapping[str, str]):
 
 
 def get_close_day(inputs: Mapping[str, str]) -> str:
-    return inputs["close_day"]
+    """Close weekday (MON..FRI) from the expected close date; "" when it can't be used.
+
+    The options expire on the Friday of the open week, so the close date must be a weekday
+    from the open date up to that Friday.
+    """
+    close_date = parse_date_text(inputs["close_date"])
+    if close_date is None:
+        return ""
+    weekday = get_weekday_name(close_date)
+    if weekday is None:
+        return ""
+    open_date = parse_date_text(inputs["open_date"])
+    if open_date is not None and not (open_date <= close_date <= get_this_friday(open_date)):
+        return ""
+    return weekday
 
 
-def default_close_day(open_day: str) -> str:
-    return NEXT_DAY.get(open_day, "")
+def default_close_date(open_date_text: str) -> str:
+    """The trading day after the open (the usual earnings exit); "" if the open date is unusable."""
+    open_date = parse_date_text(open_date_text)
+    if open_date is None:
+        return ""
+    return format_date_text(next_weekday(open_date))
 
 
 def implied_event_variance(current_iv: float, normal_iv: float, t_years: float) -> float:
@@ -247,6 +274,7 @@ class Calculator:
 
     def run(self) -> CalcResult:
         steps = (
+            self.recalculate_close_day,
             self.recalculate_short_strikes,
             self.recalculate_strike_moves,
             self.recalculate_opening_debit_and_implied_move,
@@ -268,6 +296,18 @@ class Calculator:
         self.result.theoretical_open_debit = self.theoretical_open_debit
         self.result.theoretical_close_credit = self.theoretical_close_credit
         return self.result
+
+    def recalculate_close_day(self):
+        close_day = get_close_day(self.inputs)
+        if close_day:
+            self.set_output("close_day", close_day)
+            self.set_output_style("close_day", None)
+        elif self.input("close_date").strip():
+            # A date is typed but unusable: weekend, before the open, or after the Friday expiry.
+            self.set_output("close_day", "n/a")
+            self.set_output_style("close_day", -1)
+        else:
+            self.set_output_style("close_day", None)
 
     def recalculate_short_strikes(self):
         try:
